@@ -16,7 +16,7 @@ class Blinky(Module):
 def main():
     platform = gadgetfactory_papilio_pro.Platform()
     blinky = Blinky(platform)
-    platform.build(blinky, build_dir="build", run=False)
+    platform.build(blinky, build_dir="../build", run=False)
 
 if __name__ == "__main__":
     main()

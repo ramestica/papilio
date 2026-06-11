@@ -1,9 +1,9 @@
 IMAGE      = xilinx-ise:14.7
-BUILD      = $(PWD)/../build
+BUILD      = $(shell realpath $(PWD)/../build)
 LICENSE    = $(HOME)/.Xilinx
 
 generate:
-	python3 blinky.py
+	python blinky.py
 	sed -i 's|$(BUILD)/||g' $(BUILD)/top.prj
 	sed -i 's|^par |par -mt 4 |' $(BUILD)/build_top.sh
 
