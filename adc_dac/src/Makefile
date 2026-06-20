@@ -18,7 +18,7 @@ synthesize:
 build: generate synthesize
 
 flash:
-	openFPGALoader -c ft2232 $(BUILD)/top.bit
+	openFPGALoader -f --fpga-part xc6slx9tqg144 -c ft2232 $(BUILD)/top.bit
 
 clean:
 	rm -rf $(BUILD)/

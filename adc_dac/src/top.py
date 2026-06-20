@@ -1,4 +1,4 @@
-import os
+import os, functools, operator
 from amaranth import *
 from amaranth.build import *
 from amaranth.lib import io
@@ -10,20 +10,49 @@ class PapilioProPlatformNoAutoClk(PapilioProPlatform):
         return Module()
 
 class PRBSGenerator(Elaboratable):
-    def __init__(self):
-        self.prbs = Signal(8)
-
+    def __init__(self, n , taps, init_value):
+        self.n = n
+        self.taps = taps
+        self.seed = init_value
+        self.prbs = Signal(self.n)
+        
     def elaborate(self, platform):
         m = Module()
-        state = Signal(8, init=1)
-        m.d.sync += state.eq(Cat(
-            state[7] ^ state[5] ^ state[4] ^ state[3],
-            state[0], state[1], state[2], state[3],
-            state[4], state[5], state[6],
-        ))
+        state = Signal(self.n, init=self.seed)
+        _state = [functools.reduce(operator.xor, [state[i] for i in self.taps])] + [state[i] for i in range(self.n - 1)]
+        m.d.sync += state.eq(Cat(_state))
+        #m.d.sync += state.eq(Cat(
+        #    state[7] ^ state[5] ^ state[4] ^ state[3],
+        #    state[0], state[1], state[2], state[3],
+        #    state[4], state[5], state[6],
+        #))
         m.d.comb += self.prbs.eq(state)
         return m
 
+class NoiseGenerator(Elaboratable):
+    def __init__(self):
+        self.noise = Signal(8)
+        # 8 LFSRs with different lengths, taps, and seeds for independence
+        self.generators = [
+            PRBSGenerator(n=8,  taps=[7,5,4,3], init_value=0x01),
+            PRBSGenerator(n=9,  taps=[8,4],     init_value=0x03),
+            PRBSGenerator(n=10, taps=[9,6],     init_value=0x07),
+            PRBSGenerator(n=11, taps=[10,8],    init_value=0x0F),
+            PRBSGenerator(n=12, taps=[11,9,8,6],init_value=0x1F),
+            PRBSGenerator(n=13, taps=[12,11,9,8],init_value=0x3F),
+            PRBSGenerator(n=14, taps=[13,12,11,1],init_value=0x7F),
+            PRBSGenerator(n=15, taps=[14,13],   init_value=0xFF),
+        ]
+
+    def elaborate(self, platform):
+        m = Module()
+        for g in self.generators:
+            m.submodules += g                          # register each as submodule
+        m.d.comb += self.noise.eq(Cat(
+            *[g.prbs[0] for g in self.generators]     # aggregate LSB of each
+        ))
+        return m
+    
 class AdcDac(Elaboratable):
     def elaborate(self, platform):
         m = Module()
@@ -90,7 +119,7 @@ class AdcDac(Elaboratable):
         ]
 
         # --- PRBS driving DAC ---
-        m.submodules.prbs = prbs = PRBSGenerator()
+        m.submodules.noise = noise = NoiseGenerator()
 
         # --- ADC sampling ---
         adc  = platform.request("adc",  0)
@@ -99,7 +128,7 @@ class AdcDac(Elaboratable):
 
         # --- DAC output ---
         dac = platform.request("dac", 0)
-        m.d.dac += dac.o.eq(prbs.prbs)
+        m.d.dac += dac.o.eq(noise.noise)
 
         # --- Clock outputs via xdr=2 (DDR) ---
         clk_adc_pin   = platform.request("clk_adc",     0, xdr=2)
@@ -136,7 +165,18 @@ if __name__ == "__main__":
     plan = platform.prepare(AdcDac())
     build_dir = "../build"
     os.makedirs(build_dir, exist_ok=True)
+    TRCE_VAR = ": ${TRCE:=trce}\n"
+    TRCE_CMD = '"$TRCE" -v 12 -s 3 -n 12 -fastpaths -xml top.twx top_par.ncd -o top.twr top.pcf\n'
     for filename, content in plan.files.items():
+        if filename == "build_top.sh":
+            content = content.replace(
+                ': ${BITGEN:=bitgen}',
+                ': ${BITGEN:=bitgen}\n' + TRCE_VAR
+            )
+            content = content.replace(
+                '"$BITGEN"',
+                TRCE_CMD + '"$BITGEN"'
+            )
         with open(os.path.join(build_dir, filename), "w") as f:
             f.write(content)
     print(f"Generated: {list(plan.files.keys())}")
